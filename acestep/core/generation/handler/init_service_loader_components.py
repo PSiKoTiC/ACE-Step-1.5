@@ -57,7 +57,25 @@ class InitServiceLoaderComponentsMixin:
         return vae_checkpoint_path
 
     def _load_text_encoder_and_tokenizer(self, *, checkpoint_dir: str, device: str) -> str:
-        """Load text tokenizer and embedding model."""
+        """Load the text tokenizer and embedding model, then return its path.
+
+        Args:
+            checkpoint_dir: Root checkpoint directory containing the text encoder subdirectory.
+            device: Target runtime device when CPU offload is disabled.
+
+        Returns:
+            The resolved text encoder checkpoint path as a string.
+
+        Raises:
+            FileNotFoundError: If ``checkpoint_dir`` does not contain the text encoder checkpoint.
+            Exception: Propagates tokenizer, model load, or device transfer errors from dependencies.
+
+        Side Effects:
+            Assigns ``self.text_tokenizer`` and ``self.text_encoder``, places the
+            text encoder on the active runtime device or CPU depending on
+            ``offload_to_cpu``, normalizes CPU offload to a CPU-safe dtype, and
+            switches the model to eval mode.
+        """
         from transformers import AutoModel, AutoTokenizer
 
         text_encoder_path = os.path.join(checkpoint_dir, "Qwen3-Embedding-0.6B")
