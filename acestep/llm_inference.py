@@ -646,8 +646,8 @@ class LLMHandler:
                         full_lm_model_path,
                         enforce_eager=enforce_eager_for_vllm,
                     )
-                    logger.info(f"5Hz LM status message: {status_msg}")
                     if status_msg.startswith("❌"):
+                        logger.info(f"vLLM backend unavailable, falling back. Reason: {status_msg.splitlines()[0]}")
                         if not self.llm_initialized:
                             if device == "mps" and self._is_mlx_available():
                                 logger.warning("vllm failed on MPS, trying MLX backend...")
@@ -655,11 +655,13 @@ class LLMHandler:
                                 if mlx_success:
                                     return mlx_status, True
                                 logger.warning(f"MLX also failed: {mlx_status}, falling back to PyTorch")
-                            logger.warning("Falling back to PyTorch backend")
+                            logger.info("Falling back to PyTorch backend")
                             success, status_msg = self._load_pytorch_model(full_lm_model_path, device)
                             if not success:
                                 return status_msg, False
                             status_msg = f"✅ 5Hz LM initialized successfully (PyTorch fallback)\nModel: {full_lm_model_path}\nBackend: PyTorch"
+                    else:
+                        logger.info(f"5Hz LM status: {status_msg.splitlines()[0]}")
             elif backend != "mlx":
                 success, status_msg = self._load_pytorch_model(full_lm_model_path, device)
                 if not success:
@@ -720,7 +722,13 @@ class LLMHandler:
             return f"✅ 5Hz LM initialized successfully\nModel: {model_path}\nDevice: {device_name}\nGPU Memory Utilization: {gpu_memory_utilization:.3f}\nLow GPU Memory Mode: {low_gpu_memory_mode}"
         except Exception as e:
             self.llm_initialized = False
-            return f"❌ Error initializing 5Hz LM: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            error_str = str(e)
+            # Suppress verbose traceback for known platform incompatibilities
+            if "triton" in error_str.lower():
+                logger.debug(f"vLLM init failed (Triton not available): {error_str}")
+                return f"❌ vLLM requires Triton (not available on Windows). Will fall back to PyTorch backend."
+            logger.debug(f"vLLM init failed: {error_str}\n{traceback.format_exc()}")
+            return f"❌ Error initializing 5Hz LM: {error_str}"
 
     def _run_vllm(
         self,
