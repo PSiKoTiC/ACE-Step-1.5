@@ -61,7 +61,21 @@ def create_gradio_interface(dit_handler, llm_handler, dataset_handler, init_para
     with gr.Blocks(
         title=t("app.title"),
         theme=gr.themes.Soft(),
-        head=get_audio_player_preferences_head(),
+        head=get_audio_player_preferences_head() + """
+        <script>
+        /* Flip tooltips upward when they would overflow the viewport bottom */
+        document.addEventListener('mouseover', function(e) {
+            var el = e.target.closest('.has-info-container');
+            if (!el) return;
+            var rect = el.getBoundingClientRect();
+            if (rect.bottom > window.innerHeight * 0.65) {
+                el.classList.add('tooltip-flip');
+            } else {
+                el.classList.remove('tooltip-flip');
+            }
+        });
+        </script>
+        """,
         css="""
         .main-header {
             text-align: center;
@@ -226,6 +240,24 @@ def create_gradio_interface(dit_handler, llm_handler, dataset_handler, init_para
         .checkbox-container:hover .label-text::after {
             opacity: 1;
             transform: scale(1.15);
+        }
+
+        /* Cap tooltip height and allow scrolling when content is long */
+        .has-info-container span[data-testid="block-info"]:hover + div,
+        .has-info-container span[data-testid="block-info"]:hover + span,
+        .checkbox-container:hover + div {
+            max-height: 40vh;
+            overflow-y: auto;
+            pointer-events: auto;
+        }
+
+        /* Flip tooltip above when near the bottom of the viewport */
+        .has-info-container.tooltip-flip span[data-testid="block-info"] + div,
+        .has-info-container.tooltip-flip span[data-testid="block-info"] + span {
+            bottom: 100%;
+            top: auto;
+            margin-top: 0;
+            margin-bottom: 6px;
         }
 
         /* --- Auto-toggle checkbox row --- */
