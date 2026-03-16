@@ -6,9 +6,8 @@ has not yet added support (Blackwell / SM 120 as of early 2026).
 """
 
 import functools
-import logging
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 def maybe_compile(fn=None, **compile_kwargs):
