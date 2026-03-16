@@ -105,6 +105,19 @@ def is_rocm_available() -> bool:
         return False
 
 
+def cuda_supports_bfloat16() -> bool:
+    """Return whether the active CUDA device supports native bfloat16 kernels."""
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return False
+        major, _ = torch.cuda.get_device_capability()
+        return major >= 8
+    except Exception:
+        return False
+
+
 # ===========================================================================
 # Empirical VRAM measurements (GB) -- model weights only, bf16 precision
 # These values should be calibrated using scripts/profile_vram.py

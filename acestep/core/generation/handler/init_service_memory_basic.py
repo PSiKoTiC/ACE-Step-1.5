@@ -66,12 +66,12 @@ class InitServiceMemoryBasicMixin:
         try:
             from torchao.dtypes.affine_quantized_tensor import AffineQuantizedTensor
             return AffineQuantizedTensor
-        except ImportError:
+        except Exception:
             pass
         try:
             from torchao.quantization.affine_quantized import AffineQuantizedTensor
             return AffineQuantizedTensor
-        except ImportError:
+        except Exception:
             pass
         return None
 

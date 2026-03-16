@@ -6,7 +6,22 @@ from typing import Optional
 import torch
 from loguru import logger
 
-from acestep.gpu_config import get_effective_free_vram_gb, get_global_gpu_config, is_rocm_available
+from acestep.gpu_config import (
+    cuda_supports_bfloat16,
+    get_effective_free_vram_gb,
+    get_global_gpu_config,
+    is_rocm_available,
+)
+
+
+def _is_cuda_device(device: object) -> bool:
+    """Return whether a device identifier refers to any CUDA device."""
+    if device is None:
+        return False
+    try:
+        return torch.device(str(device)).type == "cuda"
+    except (TypeError, RuntimeError, ValueError):
+        return isinstance(device, str) and device.split(":", 1)[0] == "cuda"
 
 
 class MemoryUtilsMixin:
@@ -67,7 +82,7 @@ class MemoryUtilsMixin:
                     return min(1024, max_chunk)
             return min(512, max_chunk)
 
-        if self.device == "cuda" or (isinstance(self.device, str) and self.device.startswith("cuda")):
+        if _is_cuda_device(self.device):
             try:
                 free_gb = get_effective_free_vram_gb()
             except Exception:
@@ -92,7 +107,7 @@ class MemoryUtilsMixin:
             if mem_gb is not None and mem_gb >= 32:
                 return False
             return True
-        if self.device == "cuda" or (isinstance(self.device, str) and self.device.startswith("cuda")):
+        if _is_cuda_device(self.device):
             try:
                 free_gb = get_effective_free_vram_gb()
                 logger.debug(f"[_should_offload_wav_to_cpu] Effective free VRAM: {free_gb:.2f} GB")
@@ -157,11 +172,15 @@ class MemoryUtilsMixin:
     def _get_vae_dtype(self, device: Optional[str] = None) -> torch.dtype:
         """Get VAE dtype based on target device and GPU tier."""
         target_device = device or self.device
-        if target_device in ["cuda", "xpu"]:
-            if target_device == "cuda" and is_rocm_available():
+        if _is_cuda_device(target_device):
+            if is_rocm_available():
                 # On ROCm, defer to self.dtype which is already set to a safe
                 # value (float32 by default, or ACESTEP_ROCM_DTYPE override).
                 return getattr(self, "dtype", torch.float32)
+            if cuda_supports_bfloat16():
+                return torch.bfloat16
+            return torch.float16
+        if target_device == "xpu":
             return torch.bfloat16
         if target_device == "mps":
             return torch.float16

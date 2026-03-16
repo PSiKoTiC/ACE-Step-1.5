@@ -3,6 +3,7 @@
 import importlib
 import importlib.util
 import os
+import tempfile
 import builtins
 import sys
 import types
@@ -45,6 +46,7 @@ INIT_SERVICE_MODULE = _load_init_service_module()
 InitServiceMixin = INIT_SERVICE_MODULE.InitServiceMixin
 INIT_SERVICE_DOWNLOADS_MODULE = importlib.import_module("acestep.core.generation.handler.init_service_downloads")
 INIT_SERVICE_MEMORY_BASIC_MODULE = importlib.import_module("acestep.core.generation.handler.init_service_memory_basic")
+INIT_SERVICE_LOADER_MODULE = importlib.import_module("acestep.core.generation.handler.init_service_loader")
 
 
 class _Host(InitServiceMixin):
@@ -255,10 +257,18 @@ class InitServiceMixinTests(unittest.TestCase):
                 with patch("torch.xpu", new=types.SimpleNamespace(is_available=lambda: True), create=True):
                     self.assertEqual(host._resolve_initialize_device("cuda"), "mps")
 
-    def test_validate_quantization_setup_requires_compile_model(self):
-        """It raises ValueError when quantization is requested without compile mode."""
+    def test_validate_quantization_setup_allows_quantization_without_compile_model(self):
+        """It allows quantization checks even when compile mode is disabled."""
         host = _Host(project_root="K:/fake_root", device="cpu")
-        with self.assertRaises(ValueError):
+        real_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            """Return a torchao stub so the check can pass without real dependency."""
+            if name == "torchao":
+                return types.ModuleType("torchao")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=fake_import):
             host._validate_quantization_setup(quantization="int8_weight_only", compile_model=False)
 
     def test_ensure_models_present_returns_download_error_when_main_model_fails(self):
@@ -441,6 +451,69 @@ class InitServiceMixinTests(unittest.TestCase):
         self.assertIn("Traceback:", status)
         self.assertIn("RuntimeError: load failed", status)
 
+    def test_load_main_model_ignores_cuda_sync_cleanup_error(self):
+        """It continues model loading when pre-load ``cuda.synchronize`` raises."""
+        host = _Host(project_root="K:/fake_root", device="cpu")
+        host.offload_to_cpu = True
+        host.offload_dit_to_cpu = True
+
+        class _DummyModel:
+            """Minimal model stub matching loader expectations."""
+
+            def __init__(self):
+                self.config = types.SimpleNamespace(_attn_implementation="sdpa")
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+            def eval(self):
+                return self
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = os.path.join(tmpdir, "acestep-v15-turbo")
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            torch.save(torch.zeros(1, 1, 1), os.path.join(checkpoint_dir, "silence_latent.pt"))
+
+            with patch("torch.cuda.is_available", return_value=True), \
+                    patch("torch.cuda.empty_cache"), \
+                    patch("torch.cuda.synchronize", side_effect=RuntimeError("oom during sync")), \
+                    patch("transformers.AutoModel.from_pretrained", return_value=_DummyModel()), \
+                    patch.object(host, "is_flash_attention_available", return_value=False):
+                attn = host._load_main_model_from_checkpoint(
+                    model_checkpoint_path=checkpoint_dir,
+                    device="cpu",
+                    use_flash_attention=False,
+                    compile_model=False,
+                    quantization=None,
+                )
+
+        self.assertEqual(attn, "sdpa")
+        self.assertIsNotNone(host.model)
+        self.assertIsNotNone(host.silence_latent)
+
+    def test_apply_cuda_bool_argsort_workaround_patches_pack_sequences(self):
+        """It monkey-patches dynamic ``pack_sequences`` when CUDA bool argsort is unsupported."""
+        host = _Host(project_root="K:/fake_root", device="cuda")
+
+        class _DummyModel:
+            """Model stub exposing a dynamic module path."""
+
+        _DummyModel.__module__ = "dummy_cuda_pack_module"
+        host.model = _DummyModel()
+
+        def _pack_sequences(_h1, _h2, _m1, _m2):
+            """Original no-op function used for patch detection."""
+            return "ok"
+
+        dummy_module = types.SimpleNamespace(pack_sequences=_pack_sequences)
+
+        with patch.object(host, "_cuda_supports_bool_argsort", return_value=False), \
+                patch.object(INIT_SERVICE_LOADER_MODULE.importlib, "import_module", return_value=dummy_module):
+            host._apply_cuda_bool_argsort_workaround()
+
+        self.assertIsNot(dummy_module.pack_sequences, _pack_sequences)
+        self.assertTrue(getattr(dummy_module.pack_sequences, "__acestep_bool_argsort_patched__", False))
+
     def test_validate_quantization_setup_raises_import_error_when_torchao_missing(self):
         """It raises ImportError with guidance when torchao is unavailable."""
         host = _Host(project_root="K:/fake_root", device="cpu")
@@ -459,6 +532,49 @@ class InitServiceMixinTests(unittest.TestCase):
                     compile_model=True,
                 )
         self.assertIn("torchao is required", str(ctx.exception))
+
+    def test_initialize_service_disables_quantization_when_torchao_is_incompatible(self):
+        """It falls back to non-quantized initialization when torchao checks fail."""
+        host = _Host(project_root="K:/fake_root", device="cpu")
+
+        def _fake_load_main_model(**_kwargs):
+            host.config = types.SimpleNamespace(_attn_implementation="sdpa")
+            host.model = object()
+
+        with patch.object(host, "_ensure_models_present", return_value=None), \
+                patch.object(host, "_sync_model_code_if_needed"), \
+                patch.object(host, "_validate_quantization_setup", side_effect=ImportError("torchao incompatible")), \
+                patch.object(host, "_load_main_model_from_checkpoint", side_effect=_fake_load_main_model), \
+                patch.object(host, "_load_vae_model", return_value="vae"), \
+                patch.object(host, "_load_text_encoder_and_tokenizer", return_value="te"), \
+                patch.object(host, "_initialize_mlx_backends", return_value=("Disabled", "Disabled")):
+            status, ok = host.initialize_service(
+                project_root="K:/fake_root",
+                config_path="acestep-v15-turbo",
+                device="cpu",
+                quantization="int8_weight_only",
+            )
+        self.assertTrue(ok)
+        self.assertIsNone(host.quantization)
+        self.assertIn("Model initialized successfully on cpu", status)
+
+    def test_get_affine_quantized_tensor_class_returns_none_on_torchao_attr_error(self):
+        """It treats torchao runtime import errors as unavailable quantization support."""
+        host = _Host(project_root="K:/fake_root", device="cpu")
+        real_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            """Simulate incompatible torchao module imports raising AttributeError."""
+            if name in {
+                "torchao.dtypes.affine_quantized_tensor",
+                "torchao.quantization.affine_quantized",
+            }:
+                raise AttributeError("incompatible torchao build")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=fake_import):
+            result = host._get_affine_quantized_tensor_class()
+        self.assertIsNone(result)
 
     def test_load_model_context_yields_immediately_when_offload_disabled(self):
         """It does not move models when offload_to_cpu is disabled."""
@@ -663,7 +779,8 @@ class RocmDtypeTests(unittest.TestCase):
             host.model = object()
 
         with patch.object(GPU_CONFIG_MODULE, "is_cuda_available", return_value=True), \
-                patch.object(GPU_CONFIG_MODULE, "is_rocm_available", return_value=False):
+                patch.object(GPU_CONFIG_MODULE, "is_rocm_available", return_value=False), \
+                patch.object(GPU_CONFIG_MODULE, "cuda_supports_bfloat16", return_value=True):
             with patch.object(host, "_ensure_models_present", return_value=None):
                 with patch.object(host, "_sync_model_code_if_needed"):
                     with patch.object(
@@ -690,6 +807,43 @@ class RocmDtypeTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(host.dtype, torch.bfloat16)
 
+    def test_initialize_service_uses_float16_on_pre_ampere_cuda(self):
+        """It falls back to float16 on pre-Ampere CUDA GPUs."""
+        host = self._make_rocm_host()
+
+        def _fake_load_main_model(**_kwargs):
+            host.config = types.SimpleNamespace(_attn_implementation="sdpa")
+            host.model = object()
+
+        with patch.object(GPU_CONFIG_MODULE, "is_cuda_available", return_value=True), \
+                patch.object(GPU_CONFIG_MODULE, "is_rocm_available", return_value=False), \
+                patch.object(GPU_CONFIG_MODULE, "cuda_supports_bfloat16", return_value=False):
+            with patch.object(host, "_ensure_models_present", return_value=None):
+                with patch.object(host, "_sync_model_code_if_needed"):
+                    with patch.object(
+                        host,
+                        "_load_main_model_from_checkpoint",
+                        side_effect=_fake_load_main_model,
+                    ):
+                        with patch.object(host, "_load_vae_model", return_value="vae"):
+                            with patch.object(
+                                host,
+                                "_load_text_encoder_and_tokenizer",
+                                return_value="te",
+                            ):
+                                with patch.object(
+                                    host,
+                                    "_initialize_mlx_backends",
+                                    return_value=("Disabled", "Disabled"),
+                                ):
+                                    _, ok = host.initialize_service(
+                                        project_root="K:/fake_root",
+                                        config_path="acestep-v15-turbo",
+                                        device="cuda",
+                                    )
+        self.assertTrue(ok)
+        self.assertEqual(host.dtype, torch.float16)
+
     def test_get_vae_dtype_returns_self_dtype_on_rocm(self):
         """It defers to self.dtype for VAE when ROCm is active."""
         host = _VaeHost(project_root="K:/fake_root", device="cuda")
@@ -710,8 +864,27 @@ class RocmDtypeTests(unittest.TestCase):
         """It returns bfloat16 for VAE on standard CUDA (non-ROCm) devices."""
         host = _VaeHost(project_root="K:/fake_root", device="cuda")
         host.dtype = torch.float32
-        with patch.object(MEMORY_UTILS_MODULE, "is_rocm_available", return_value=False):
+        with patch.object(MEMORY_UTILS_MODULE, "is_rocm_available", return_value=False), \
+                patch.object(MEMORY_UTILS_MODULE, "cuda_supports_bfloat16", return_value=True):
             result = host._get_vae_dtype("cuda")
+        self.assertEqual(result, torch.bfloat16)
+
+    def test_get_vae_dtype_returns_float16_on_pre_ampere_cuda(self):
+        """It returns float16 for VAE on pre-Ampere CUDA devices."""
+        host = _VaeHost(project_root="K:/fake_root", device="cuda")
+        host.dtype = torch.float32
+        with patch.object(MEMORY_UTILS_MODULE, "is_rocm_available", return_value=False), \
+                patch.object(MEMORY_UTILS_MODULE, "cuda_supports_bfloat16", return_value=False):
+            result = host._get_vae_dtype("cuda")
+        self.assertEqual(result, torch.float16)
+
+    def test_get_vae_dtype_treats_cuda_index_device_as_cuda(self):
+        """It treats device strings like ``cuda:0`` as CUDA for VAE dtype selection."""
+        host = _VaeHost(project_root="K:/fake_root", device="cuda:0")
+        host.dtype = torch.float32
+        with patch.object(MEMORY_UTILS_MODULE, "is_rocm_available", return_value=False), \
+                patch.object(MEMORY_UTILS_MODULE, "cuda_supports_bfloat16", return_value=True):
+            result = host._get_vae_dtype("cuda:0")
         self.assertEqual(result, torch.bfloat16)
 
 if __name__ == "__main__":
