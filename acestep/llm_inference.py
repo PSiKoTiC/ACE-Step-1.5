@@ -602,9 +602,10 @@ class LLMHandler:
                 )
             _has_triton = False
             try:
-                _has_triton = importlib.util.find_spec("triton") is not None
-            except Exception:
-                pass
+                import triton  # noqa: F401
+                _has_triton = True
+            except ImportError:
+                _has_triton = False
             if not _has_triton:
                 logger.info(
                     "Triton not available: disabling CUDA graph capture for nano-vllm "
