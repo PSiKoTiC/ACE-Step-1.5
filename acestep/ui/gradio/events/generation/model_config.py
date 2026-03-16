@@ -113,7 +113,7 @@ def get_ui_control_config(is_turbo: bool, is_pure_base: bool = False, is_sft: bo
         }
 
 
-def get_model_type_ui_settings(is_turbo: bool, current_mode: str = None, is_pure_base: bool = False, is_sft: bool = False):
+def get_model_type_ui_settings(is_turbo: bool, current_mode: str | None = None, is_pure_base: bool = False, is_sft: bool = False):
     """Get gr.update() tuple for model-type controls.
 
     Args:
