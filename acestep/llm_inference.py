@@ -2295,7 +2295,7 @@ class LLMHandler:
             # subsequent CUDA illegal memory access errors
             if self.llm_backend == "vllm":
                 try:
-                    from acestep.customized_vllm.context import reset_context
+                    from acestep.customized_vllm import reset_context
                     reset_context()
                 except ImportError:
                     pass
