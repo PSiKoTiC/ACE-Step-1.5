@@ -78,6 +78,15 @@ class LLMHandler:
         self._mlx_model = None
         self._mlx_model_path = None
 
+    def _clear_cuda_cache(self) -> None:
+        """Release freed CUDA memory back to the driver.
+
+        Called after LLM generation to prevent PyTorch's caching allocator
+        from holding stale memory blocks across sequential generations.
+        """
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     def unload(self) -> None:
         """Release LM weights/tokenizer and clear caches to free memory."""
         try:
@@ -1426,6 +1435,8 @@ class LLMHandler:
                         }
                     },
                 }
+            finally:
+                self._clear_cuda_cache()
 
             # Parse audio codes from each output
             audio_codes_list = []
@@ -2274,6 +2285,7 @@ class LLMHandler:
                     lyrics=lyrics,
                     cot_text=cot_text,
                 )
+                self._clear_cuda_cache()
                 return output_text, f"✅ Generated successfully (vllm) | length={len(output_text)}"
 
             elif self.llm_backend == "mlx":
@@ -2323,6 +2335,7 @@ class LLMHandler:
                 lyrics=lyrics,
                 cot_text=cot_text,
             )
+            self._clear_cuda_cache()
             return output_text, f"✅ Generated successfully (pt) | length={len(output_text)}"
 
         except Exception as e:
