@@ -5,16 +5,32 @@ unavailable — e.g. on Windows or on GPU architectures where Triton
 has not yet added support (Blackwell / SM 120 as of early 2026).
 """
 
+from typing import Any, Callable, Optional, TypeVar
+
 from loguru import logger
 
+F = TypeVar("F", bound=Callable[..., Any])
 
-def maybe_compile(fn=None, **compile_kwargs):
+
+def maybe_compile(fn: Optional[F] = None, **compile_kwargs: Any) -> Any:
     """Apply ``torch.compile`` only when its backend (Triton) is available.
 
     Drop-in replacement for the ``@torch.compile`` decorator.  When Triton
     is importable the function is compiled as usual; otherwise the original
     function is returned unmodified so inference still works (just without
     the kernel-fusion speed-up).
+
+    Args:
+        fn: The function to compile. When used as ``@maybe_compile`` (without
+            parentheses) the decorated function is passed directly.  When used
+            as ``@maybe_compile(...)`` this is ``None`` and a decorator is
+            returned instead.
+        **compile_kwargs: Keyword arguments forwarded to ``torch.compile``
+            (e.g. ``dynamic=True``, ``fullgraph=True``).
+
+    Returns:
+        The compiled function when Triton is available, or the original
+        unmodified function as a fallback.
 
     Usage::
 
@@ -27,7 +43,8 @@ def maybe_compile(fn=None, **compile_kwargs):
         def forward(self, x):
             ...
     """
-    def decorator(func):
+    def decorator(func: F) -> F:
+        """Inner decorator that performs the actual compile-or-skip logic."""
         try:
             import triton  # noqa: F401
             import torch

@@ -711,8 +711,18 @@ class LLMHandler:
             return f"❌ Error initializing 5Hz LM: {str(e)}\n\nTraceback:\n{traceback.format_exc()}", False
 
     def _initialize_5hz_lm_vllm(self, model_path: str, enforce_eager: bool = False, has_triton: bool = True) -> str:
-        """Initialize 5Hz LM model using vllm backend. When enforce_eager is True, CUDA graph
-        capture is disabled (required when LoRA training may run in the same process)."""
+        """Initialize 5Hz LM model using vllm backend.
+
+        Args:
+            model_path: Path to the 5Hz LM model checkpoint.
+            enforce_eager: Disable CUDA graph capture.  Set to ``True`` when
+                Triton is unavailable so vLLM does not attempt graph capture
+                that depends on compiled kernels.
+            has_triton: Whether the Triton compiler is available.  When
+                ``False``, ``torch._dynamo`` diagnostics are temporarily
+                suppressed during initialization to avoid verbose fallback
+                warnings, then restored afterwards.
+        """
         if not torch.cuda.is_available():
             self.llm_initialized = False
             logger.error("CUDA/ROCm is not available. Please check your GPU setup.")
@@ -751,25 +761,37 @@ class LLMHandler:
             # verbose "WON'T CONVERT" warnings with full tracebacks.
             # suppress_errors makes it fall back silently to eager mode,
             # and raising the log level hides the noisy warning output.
+            # State is restored after init to avoid masking diagnostics
+            # from other components.
+            _dynamo_state_saved = False
             if not has_triton:
                 import torch._dynamo as _dynamo
-                _dynamo.config.suppress_errors = True
                 import logging as _logging
-                _logging.getLogger("torch._dynamo").setLevel(_logging.ERROR)
+                _dynamo_logger = _logging.getLogger("torch._dynamo")
+                _prev_suppress = _dynamo.config.suppress_errors
+                _prev_log_level = _dynamo_logger.level
+                _dynamo.config.suppress_errors = True
+                _dynamo_logger.setLevel(_logging.ERROR)
+                _dynamo_state_saved = True
 
-            start_time = time.time()
-            self.llm = LLM(
-                model=model_path,
-                enforce_eager=enforce_eager,
-                tensor_parallel_size=1,
-                max_model_len=self.max_model_len,
-                gpu_memory_utilization=gpu_memory_utilization,
-                tokenizer=self.llm_tokenizer,
-            )
-            logger.info(f"5Hz LM initialized successfully in {time.time() - start_time:.2f} seconds")
-            self.llm_initialized = True
-            self.llm_backend = "vllm"
-            return f"✅ 5Hz LM initialized successfully\nModel: {model_path}\nDevice: {device_name}\nGPU Memory Utilization: {gpu_memory_utilization:.3f}\nLow GPU Memory Mode: {low_gpu_memory_mode}"
+            try:
+                start_time = time.time()
+                self.llm = LLM(
+                    model=model_path,
+                    enforce_eager=enforce_eager,
+                    tensor_parallel_size=1,
+                    max_model_len=self.max_model_len,
+                    gpu_memory_utilization=gpu_memory_utilization,
+                    tokenizer=self.llm_tokenizer,
+                )
+                logger.info(f"5Hz LM initialized successfully in {time.time() - start_time:.2f} seconds")
+                self.llm_initialized = True
+                self.llm_backend = "vllm"
+                return f"✅ 5Hz LM initialized successfully\nModel: {model_path}\nDevice: {device_name}\nGPU Memory Utilization: {gpu_memory_utilization:.3f}\nLow GPU Memory Mode: {low_gpu_memory_mode}"
+            finally:
+                if _dynamo_state_saved:
+                    _dynamo.config.suppress_errors = _prev_suppress
+                    _dynamo_logger.setLevel(_prev_log_level)
         except Exception as e:
             self.llm_initialized = False
             error_str = str(e)
