@@ -150,7 +150,7 @@
     "batch_size_info": "How many variations to generate at once. Higher = more options to choose from, but uses more VRAM and takes longer. Generate 2–4 to compare and pick the best result.",
     "advanced_settings": "⚙️ Settings",
     "inference_steps_label": "DiT Inference Steps",
-    "inference_steps_info": "How many denoising passes the DiT model makes. More steps = higher quality but slower. Turbo models: 4–8 steps (default 8, diminishing returns above 8). Base models: 50–200 steps (default 100). Doubling steps roughly doubles generation time.",
+    "inference_steps_info": "How many denoising passes the DiT model makes. More steps = higher quality but slower. Turbo models: 4–8 steps (default 8, diminishing returns above 8). SFT models: 30–100 steps (default 50). Base/unknown models default to 32 steps. Doubling steps roughly doubles generation time.",
     "guidance_scale_label": "DiT Guidance Scale (Base model only)",
     "guidance_scale_info": "Controls how strictly the output follows your caption/prompt. Higher (10–15) = more faithful to prompt but can sound harsh or distorted. Lower (1–5) = more natural/creative but may drift from your description. Default 5.0. Base model only — has no effect on turbo models.",
     "seed_label": "Seed",
