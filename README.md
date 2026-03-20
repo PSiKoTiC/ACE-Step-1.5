@@ -107,6 +107,8 @@ Open http://localhost:7860 (Gradio) or http://localhost:8001 (API).
 
 > 📦 **Windows users:** A [portable package](https://files.acemusic.ai/acemusic/win/ACE-Step-1.5.7z) with pre-installed dependencies is available. See [Installation Guide](./docs/en/INSTALL.md#-windows-portable-package).
 
+> 📦 **MacOS users:** A [portable package](https://files.acemusic.ai/acemusic/mac/ACE-Step-1.5.zip) with pre-installed dependencies is available. See [Installation Guide](./docs/en/INSTALL.md#-macos-portable-package).
+
 > 📖 **Full installation guide** (AMD/ROCm, Intel GPU, CPU, environment variables, command-line options): [English](./docs/en/INSTALL.md) | [中文](./docs/zh/INSTALL.md) | [日本語](./docs/ja/INSTALL.md)
 
 ### 💡 Which Model Should I Choose?
@@ -171,6 +173,7 @@ LANGUAGE=en
 |--------|-------------|---------------|
 | 🖥️ **Gradio Web UI** | Interactive web interface for music generation | [Guide](./docs/en/GRADIO_GUIDE.md) |
 | 🎚️ **Studio UI** | Optional HTML frontend (DAW-like) | [Guide](./docs/en/studio.md) |
+| 🎛️ **VST3 MVP Architecture** | Proposed DAW plugin architecture and scope | [Guide](./docs/en/VST3_MVP.md) |
 | 🐍 **Python API** | Programmatic access for integration | [Guide](./docs/en/INFERENCE.md) |
 | 🌐 **REST API** | HTTP-based async API for services | [Guide](./docs/en/API.md) |
 | ⌨️ **CLI** | Interactive wizard and configuration | [Guide](./docs/en/CLI.md) |
