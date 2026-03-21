@@ -29,8 +29,8 @@ def get_vllm_preflight_warning(*, device: str, platform: str | None = None) -> s
         return None
     if _has_working_triton_installation():
         return None
-    return (
-        "vLLM backend is unavailable on Windows because Triton is not installed "
-        "or is incompatible. Falling back to the PyTorch backend. "
-        "Use --backend pt to suppress this warning."
-    )
+    # Triton is unavailable on Windows — vLLM will run in eager mode
+    # (no CUDA graph capture) which is slower but fully functional.
+    # Return None to allow vLLM to proceed; enforce_eager is already
+    # set True by the Triton check in initialize().
+    return None

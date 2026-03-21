@@ -725,10 +725,11 @@ class LLMHandler:
                         enforce_eager=enforce_eager_for_vllm,
                         has_triton=_has_triton,
                     )
-                    logger.info(f"5Hz LM status message: {status_msg}")
                     if status_msg.startswith("❌"):
-                        logger.warning(f"vLLM initialization failed before PyTorch fallback: {status_msg}")
+                        logger.info(f"vLLM backend unavailable, falling back. Reason: {status_msg.splitlines()[0]}")
                         vllm_fallback_note = status_msg.splitlines()[0]
+                    else:
+                        logger.info(f"5Hz LM status: {status_msg.splitlines()[0]}")
                         if not self.llm_initialized:
                             if device == "mps" and self._is_mlx_available():
                                 logger.warning("vllm failed on MPS, trying MLX backend...")
@@ -736,7 +737,7 @@ class LLMHandler:
                                 if mlx_success:
                                     return mlx_status, True
                                 logger.warning(f"MLX also failed: {mlx_status}, falling back to PyTorch")
-                            logger.warning("Falling back to PyTorch backend")
+                            logger.info("Falling back to PyTorch backend")
                             success, status_msg = self._load_pytorch_model(full_lm_model_path, device)
                             if not success:
                                 return status_msg, False
@@ -840,15 +841,12 @@ class LLMHandler:
                     _dynamo_logger.setLevel(_prev_log_level)
         except Exception as e:
             self.llm_initialized = False
-            if "Cannot find a working triton installation" in str(e):
-                status_msg = "❌ vLLM backend requires a working Triton installation."
-                if sys.platform == "win32":
-                    status_msg += (
-                        " Falling back to PyTorch is recommended on Windows. "
-                        "Use --backend pt to avoid this warning."
-                    )
-                return status_msg
-            return f"❌ Error initializing 5Hz LM: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            error_str = str(e)
+            if "triton" in error_str.lower():
+                logger.debug(f"vLLM init failed (Triton not available): {error_str}")
+                return f"❌ vLLM requires Triton (not available on Windows). Will fall back to PyTorch backend."
+            logger.debug(f"vLLM init failed: {error_str}\n{traceback.format_exc()}")
+            return f"❌ Error initializing 5Hz LM: {error_str}"
 
     def _run_vllm(
         self,
